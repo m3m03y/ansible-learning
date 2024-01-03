@@ -1,0 +1,115 @@
+---
+- hosts: kubernetes-master
+  name: "Configure master"
+  vars: 
+    home: "{{ lookup('ansible.builtin.env', 'HOME') }}" # {{ ansible_user_dir }}
+  tasks:
+    - name: "Check Kubeadm was initialized"
+      ansible.builtin.stat:
+        path: /etc/kubernetes/manifests/kube-apiserver.yaml
+      register: kubeconfig 
+    - name: Kubeadm status
+      ansible.builtin.debug:
+        msg: "Kubeconfig value: {{ kubeconfig }}, exists value: {{ kubeconfig.stat.exists }}"   
+    - name: "Initialize Kubeadm on master node"
+      vars:
+        ip_addr: "{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }}"
+        nodename: "{{ ansible_hostname }}"
+        pod_cidr: "192.168.0.0/16"
+      ansible.builtin.command: "kubeadm init --apiserver-advertise-address={{ ip_addr }}  --apiserver-cert-extra-sans={{ ip_addr }}  --pod-network-cidr={{ pod_cidr }} --node-name {{ nodename }}"
+      become: true
+      when: kubeconfig.stat.exists == False
+      notify:
+        - copy kubeconfig 
+    - name: "Create kube dir"
+      ansible.builtin.file:
+        path: "{{ansible_user_dir}}/.kube"
+        state: directory
+      become: true
+  handlers:
+    - name: copy kubeconfig
+      ansible.builtin.copy:
+        src: "/etc/kubernetes/admin.conf"
+        dest: "{{ansible_user_dir}}/.kube/config"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+        remote_src: true
+      become: true
+
+- hosts: kubernetes-master
+  name: "Install network plugin"
+  tasks:
+    - name: "Check calico network plugin installed"
+      ansible.builtin.command: "kubectl get pods -n tigera-operator"
+      register: plugins
+    - name: "Install calico network plugin"
+      ansible.builtin.command: "kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/tigera-operator.yaml"
+      when: "'tigera-operator' not in plugins.stdout"
+
+- hosts: virtual-machines
+  name: "Change hostname to unique"
+  tasks:
+    - name: "Change hostname"
+      ansible.builtin.command: "hostname {{ inventory_hostname }}"
+      become: true
+      when: "ansible_hostname != inventory_hostname"
+
+- hosts: external-machines
+  name: "Clear up temp"
+  tasks:
+    - name: "Delete files"
+      ansible.builtin.file:
+        state: absent
+        path: "{{ item }}"
+      with_items:
+        - "/tmp/join-command.sh"
+        - "/tmp/nodes.txt"
+        
+- hosts: kubernetes-master
+  name: "Prepare master for nodes"
+  tasks:
+    - name: "Generate join command"
+      ansible.builtin.command: "kubeadm token create --print-join-command"
+      register: join_command
+    - name: "Set up master node to schedule apps"
+      ansible.builtin.command: "kubectl taint nodes --all node-role.kubernetes.io/control-plane-"
+    - name: "Check available nodes"
+      ansible.builtin.command: "kubectl get nodes --no-headers -o custom-columns=':metadata.name'"
+      register: nodes
+    - name: "Save command to file"
+      ansible.builtin.lineinfile:
+        line: "{{ join_command.stdout }}"
+        path: "/tmp/join-command.sh"
+        create: true
+    - name: "Save nodes list to file"
+      ansible.builtin.lineinfile:
+        line: "{{ nodes.stdout }}"
+        path: "/tmp/nodes.txt"
+        create: true   
+    - name: "Copy join command"
+      ansible.builtin.fetch:
+        src: "{{ item }}"
+        dest: "/tmp/"
+        flat: true
+      with_items:
+        - "/tmp/join-command.sh"
+        - "/tmp/nodes.txt"
+
+- hosts: kubernetes-node
+  name: "Connect nodes to master"
+  tasks:
+    - name: "Copy file from host"
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "/tmp"
+        mode: a+rx
+      with_items:
+        - "/tmp/join-command.sh"
+        - "/tmp/nodes.txt"
+    - name: "Check existing nodes"
+      ansible.builtin.command: "cat /tmp/nodes.txt"
+      register: existing_nodes
+    - name: "Join node to master"
+      ansible.builtin.command: "sh /tmp/join-command.sh"
+      when: "inventory_hostname not in existing_nodes.stdout"
+      become: true

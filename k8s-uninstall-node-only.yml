@@ -1,0 +1,83 @@
+---
+- hosts: kubernetes-node
+  name: "Remove Kubernetes"
+  vars:
+    version: "v1.28"
+  tasks:
+    - name: "Update repositories cache"
+      ansible.builtin.apt:      
+        update_cache: yes
+      become: true
+    - name: "Add Kubernetes's official GPG key"
+      ansible.builtin.get_url:
+        url:  https://pkgs.k8s.io/core:/stable:/{{ version }}/deb/Release.key
+        dest: /usr/share/keyrings/kubernetes.asc
+        mode: a+r
+      become: true
+    - name: "Set up Kubernetes's APT repository"
+      ansible.builtin.apt_repository: 
+        repo: "deb [signed-by=/usr/share/keyrings/kubernetes.asc] https://pkgs.k8s.io/core:/stable:/{{ version }}/deb/ /"
+        state: present
+        filename: kubernetes
+        update_cache: yes
+      become: true
+    - name: "Uninstall Kubernetes packages"
+      ansible.builtin.apt:
+        name: "{{ packages }}"
+        state: absent
+        update_cache: yes
+        autoremove: true
+        purge: true
+      become: true
+      vars:
+        packages:
+        - kubelet
+        - kubeadm
+        - kubectl
+        - kubernetes-cni
+        - kube*
+    - name: "Disable autocompletion"
+      ansible.builtin.lineinfile:
+        path: "/home/{{  ansible_user_id }}/.bashrc"
+        line: "source <(kubectl completion bash)"
+        state: absent
+    - name: "Remove Kubernetes's APT repository"
+      ansible.builtin.apt_repository: 
+        repo: "deb [signed-by=/usr/share/keyrings/kubernetes.asc] https://pkgs.k8s.io/core:/stable:/{{ version }}/deb/ /"
+        state: absent
+        filename: kubernetes
+        update_cache: yes
+      become: true
+    - name: "Reboot all nodes"
+      ansible.builtin.reboot:
+      become: true          
+    - name: "Remove related files"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      become: true
+      with_items:
+        - "/etc/default/kubelet"
+        - "/etc/modules-load.d/k8s.conf"
+        - "/etc/sysctl.d/k8s.conf"
+        - "/etc/kubernetes"
+        - "/var/lib/etcd"
+        - "/var/lib/kubelet"
+        - "{{ansible_user_dir}}/.kube/config"
+        - "/usr/share/keyrings/kubernetes.asc"
+    - name: "Reenable SWAP in fstab"
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^# (.+?\sswap\s+sw\s+.*)$'
+        replace: '\1'
+      become: true
+    - name: "Enable SWAP"
+      ansible.builtin.command: swapon -a
+      become: true
+
+- hosts: kubernetes-node
+  name: "Reboot all"
+  tasks:
+    - name: "Reboot all nodes"
+      ansible.builtin.reboot:
+      become: true      

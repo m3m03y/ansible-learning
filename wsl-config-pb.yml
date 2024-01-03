@@ -1,0 +1,125 @@
+---
+- hosts: local-wsl
+  name: "Install Docker"
+  connection: local
+  tasks:
+    - name: "Update repositories cache and upgrade"
+      ansible.builtin.apt:      
+        update_cache: yes
+        upgrade: "full"
+      become: true
+    - name: "Install docker prerequisite"
+      ansible.builtin.apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      become: true
+      vars:
+        packages:
+        - ca-certificates
+        - curl
+        - gnupg
+        - lsb-release
+        - apt-transport-https
+        - bash-completion
+        - software-properties-common
+        - python3-pip
+        - virtualenv
+        - python3-setuptools
+    - name: "Add Docker's official GPG key"
+      ansible.builtin.get_url:
+        url:  https://download.docker.com/{{ ansible_system | lower }}/{{ ansible_distribution | lower }}/gpg
+        dest: /usr/share/keyrings/docker.asc
+        mode: a+r
+      become: true
+    - name: "Get architecture"
+      ansible.builtin.command: dpkg --print-architecture
+      register: out_arch
+    - name: "Get system info"
+      ansible.builtin.lineinfile:
+        line: "deb [arch={{ out_arch.stdout }}] https://download.docker.com/{{ ansible_system | lower }}/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        create: yes
+        path: /home/{{ ansible_user_id }}/info-{{ ansible_user_id }}
+    - name: "Set up Docker's APT repository"
+      ansible.builtin.apt_repository: 
+        repo: "deb [arch={{ out_arch.stdout }} signed-by=/usr/share/keyrings/docker.asc] https://download.docker.com/{{ ansible_system | lower }}/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+        update_cache: yes
+      become: true
+    - name: "Install Docker packages"
+      ansible.builtin.apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      become: true
+      vars:
+        packages:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - docker-buildx-plugin
+        - docker-compose-plugin
+      notify:
+        - docker start
+    - name: "Create docker group"
+      become: true
+      ansible.builtin.group:
+        name: docker
+        state: present
+    - name: "Add default user to docker group"
+      become: true
+      ansible.builtin.user:
+        name: "{{ ansible_user_id }}"
+        append: true
+        groups: docker
+  handlers:
+    - name: docker start
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+- hosts: local-wsl
+  name: "Install Kubernetes"
+  vars:
+    version: v1.28
+  tasks:
+    - name: "Add Kubernetes's official GPG key"
+      ansible.builtin.get_url:
+        url:  https://pkgs.k8s.io/core:/stable:/{{ version }}/deb/Release.key
+        dest: /usr/share/keyrings/kubernetes.asc
+        mode: a+r
+      become: true
+    - name: "Set up Kubernetes's APT repository"
+      ansible.builtin.apt_repository: 
+        repo: "deb [signed-by=/usr/share/keyrings/kubernetes.asc] https://pkgs.k8s.io/core:/stable:/{{ version }}/deb/ /"
+        state: present
+        filename: kubernetes
+        update_cache: yes
+      become: true
+    - name: "Install Kubernetes packages"
+      ansible.builtin.apt:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      become: true
+      vars:
+        packages:
+        - kubelet
+        - kubeadm
+        - kubectl
+    - name: "Enable autocompletion"
+      ansible.builtin.lineinfile:
+        path: "/home/{{  ansible_user_id }}/.bashrc"
+        line: "source <(kubectl completion bash)"
+
+- hosts: local-wsl
+  name: "Setup minikube on WSL"
+  tasks:
+    - name: "Install minikube"
+      ansible.builtin.apt: 
+        deb: "https://storage.googleapis.com/minikube/releases/latest/minikube_latest_amd64.deb"
+      become: true
+    - name: "Start cluster"
+      ansible.builtin.command: "minikube start"
