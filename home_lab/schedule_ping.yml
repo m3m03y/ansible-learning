@@ -1,0 +1,11 @@
+---
+- hosts: raspberry-pi
+  name: "Schedule cron job"
+  connection: ssh
+  tasks:
+    - name: "Create cron job"
+      ansible.builtin.cron:
+        name: "ping host"
+        minute: "*/5"
+        job: "ping -c 192.168.1.1 > /dev/null 2>&1"
+ 
