@@ -1,0 +1,7 @@
+raspberry-pi:
+  hosts:
+    change-me:
+      ansible_host: 
+      ansible_connection: ssh
+      ansible_password: 
+      ansible_user: 

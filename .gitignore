@@ -3,8 +3,9 @@
 
 ### Ansible ###
 *.retry
-inventory
+inventory.*
 # End of https://www.toptal.com/developers/gitignore/api/ansible
 # Tests
 test_*
 test-*
+test-inventory
